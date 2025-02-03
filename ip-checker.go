@@ -5,8 +5,9 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"runtime"
-	"time"
+
+	// "runtime"
+	// "time"
 
 	"github.com/oschwald/maxminddb-golang"
 )
@@ -26,6 +27,7 @@ func NewChecker() (*Checker, error) {
 		"Hostingv6":  "./HostingRangesIPv6.mmdb",
 		"Locationv4": "./location.mmdb",
 		"Locationv6": "./location6.mmdb",
+		"Company":    "./company.mmdb",
 	}
 
 	readers := make(map[string]*maxminddb.Reader)
@@ -46,8 +48,16 @@ func (c *Checker) Close() {
 	}
 }
 
+type LocationData struct {
+	Timezone string `json:"timezone"`
+}
+
+type CompanyData struct {
+	Type string `json:"type"`
+}
+
 func (c *Checker) handleCheck(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
+	// start := time.Now()
 
 	// Проверяем API ключ
 	const apiKey = "dj2k3hd8js9f" // захардкоженный ключ
@@ -76,15 +86,17 @@ func (c *Checker) handleCheck(w http.ResponseWriter, r *http.Request) {
 
 	// Создаем упорядоченный результат
 	orderedResult := struct {
-		IP         string                 `json:"ip"`
-		Proxy      bool                   `json:"proxy"`
-		VPN        bool                   `json:"vpn"`
-		Tor        bool                   `json:"tor"`
-		Crawler    bool                   `json:"crawler"`
-		Abuser     bool                   `json:"abuser"`
-		Datacenter bool                   `json:"datacenter"`
-		Location   interface{}            `json:"location"`
-		Debug      map[string]interface{} `json:"_debug"`
+		IP         string        `json:"ip"`
+		Proxy      bool          `json:"proxy"`
+		VPN        bool          `json:"vpn"`
+		Tor        bool          `json:"tor"`
+		Crawler    bool          `json:"crawler"`
+		Abuser     bool          `json:"abuser"`
+		Datacenter bool          `json:"datacenter"`
+		Location   *LocationData `json:"location"`
+		Company    *CompanyData  `json:"company"`
+
+		// Debug      map[string]interface{} `json:"_debug"`
 	}{
 		IP: ipStr,
 	}
@@ -130,21 +142,34 @@ func (c *Checker) handleCheck(w http.ResponseWriter, r *http.Request) {
 		locationKey = "Locationv6"
 	}
 	if reader, ok := c.readers[locationKey]; ok {
-		var data interface{}
-		err := reader.Lookup(ip, &data)
-		if err == nil && data != nil {
-			orderedResult.Location = data
+		var rawData map[string]interface{}
+		err := reader.Lookup(ip, &rawData)
+		if err == nil {
+			if tz, ok := rawData["timezone"].(string); ok {
+				orderedResult.Location = &LocationData{Timezone: tz}
+			}
+		}
+	}
+
+	// Получаем данные о компании
+	if reader, ok := c.readers["Company"]; ok {
+		var rawData map[string]interface{}
+		err := reader.Lookup(ip, &rawData)
+		if err == nil {
+			if typ, ok := rawData["type"].(string); ok {
+				orderedResult.Company = &CompanyData{Type: typ}
+			}
 		}
 	}
 
 	// Добавляем дебаг информацию
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	orderedResult.Debug = map[string]interface{}{
-		"lookup_time_ms": float64(time.Since(start).Microseconds()) / 1000.0,
-		"goroutines":     runtime.NumGoroutine(),
-		"memory_kb":      m.Alloc / 1024,
-	}
+	// 	var m runtime.MemStats
+	// 	runtime.ReadMemStats(&m)
+	// 	orderedResult.Debug = map[string]interface{}{
+	// 		"lookup_time_ms": float64(time.Since(start).Microseconds()) / 1000.0,
+	// 		"goroutines":     runtime.NumGoroutine(),
+	// 		"memory_kb":      m.Alloc / 1024,
+	// 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(orderedResult)
